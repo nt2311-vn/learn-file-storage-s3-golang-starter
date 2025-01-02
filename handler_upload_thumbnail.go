@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,11 +56,27 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	imgData, err := io.ReadAll(file)
+	// imgData, err := io.ReadAll(file)
+	// if err != nil {
+	// 	respondWithError(w, http.StatusInternalServerError, "Could not read image data", err)
+	// 	return
+	// }
+
+	// encodeStr := base64.StdEncoding.EncodeToString(imgData)
+	// dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encodeStr)
+
+	newFile, err := os.Create(filepath.Join(cfg.assetsRoot, videoIDString))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could not read image data", err)
+		respondWithError(
+			w,
+			http.StatusInternalServerError,
+			"Could not create file data to asset dir",
+			err,
+		)
 		return
 	}
+
+	io.Copy(newFile, file)
 
 	videoMetadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -71,19 +89,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoThumbnails[videoID] = thumbnail{
-		data:      imgData,
-		mediaType: mediaType,
-	}
+	// thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/{%s}", cfg.port, videoID)
 
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/{%s}", cfg.port, videoID)
+	staticURL := fmt.Sprintf("http://localhost:<port>/assets/%s.%s", videoID, mediaType)
 
-	videoMetadata.ThumbnailURL = &thumbnailURL
+	videoMetadata.ThumbnailURL = &staticURL
 	videoMetadata.UpdatedAt = time.Now()
+	delete(videoThumbnails, videoID)
 
 	err = cfg.db.UpdateVideo(videoMetadata)
 	if err != nil {
-		delete(videoThumbnails, videoID)
 		respondWithError(w, http.StatusInternalServerError, "Cannot upload video thumnail", err)
 		return
 	}
