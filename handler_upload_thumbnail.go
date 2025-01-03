@@ -1,13 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,12 +36,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
 	const maxMemory = 10 << 20
-	if err := r.ParseMultipartForm(maxMemory); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Cannot parse form", err)
-		return
-	}
+	r.ParseMultipartForm(maxMemory)
 
-	file, fileHeader, err := r.FormFile("thumbnail")
+	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Cannot get thumbnail", err)
 		return
@@ -51,14 +46,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	defer file.Close()
 
-	getType := fileHeader.Header.Get("Content-Type")
-
-	if getType == "" {
-		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
-		return
-	}
-
-	mediaType, _, err := mime.ParseMediaType(getType)
+	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Cannot parse media type", err)
 		return
@@ -69,16 +57,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	imgData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could not read image data", err)
-		return
-	}
+	assetPath := getAssetPath(mediaType)
+	assetDiskPath := cfg.getAssetDiskPath(assetPath)
 
-	encodeStr := base64.StdEncoding.EncodeToString(imgData)
-	dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encodeStr)
-
-	newFile, err := os.Create(filepath.Join(cfg.assetsRoot, videoIDString))
+	dst, err := os.Create(assetDiskPath)
 	if err != nil {
 		respondWithError(
 			w,
@@ -89,7 +71,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	io.Copy(newFile, file)
+	defer dst.Close()
+
+	if _, err = io.Copy(dst, file); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error saving file", err)
+		return
+	}
 
 	videoMetadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -102,11 +89,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/{%s}", cfg.port, videoID)
+	url := cfg.getAssetURL(assetPath)
 
-	videoMetadata.ThumbnailURL = &dataURL
+	videoMetadata.ThumbnailURL = &url
 	videoMetadata.UpdatedAt = time.Now()
-	delete(videoThumbnails, videoID)
 
 	err = cfg.db.UpdateVideo(videoMetadata)
 	if err != nil {
