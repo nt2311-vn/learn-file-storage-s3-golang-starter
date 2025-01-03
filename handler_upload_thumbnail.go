@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,21 +51,32 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	defer file.Close()
 
-	mediaType := fileHeader.Header.Get("Content-Type")
+	getType := fileHeader.Header.Get("Content-Type")
 
-	if mediaType == "" {
+	if getType == "" {
 		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
 		return
 	}
 
-	// imgData, err := io.ReadAll(file)
-	// if err != nil {
-	// 	respondWithError(w, http.StatusInternalServerError, "Could not read image data", err)
-	// 	return
-	// }
+	mediaType, _, err := mime.ParseMediaType(getType)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Cannot parse media type", err)
+		return
+	}
 
-	// encodeStr := base64.StdEncoding.EncodeToString(imgData)
-	// dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encodeStr)
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusInternalServerError, "not allow type of file", err)
+		return
+	}
+
+	imgData, err := io.ReadAll(file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not read image data", err)
+		return
+	}
+
+	encodeStr := base64.StdEncoding.EncodeToString(imgData)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encodeStr)
 
 	newFile, err := os.Create(filepath.Join(cfg.assetsRoot, videoIDString))
 	if err != nil {
@@ -91,9 +104,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	// thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/{%s}", cfg.port, videoID)
 
-	staticURL := fmt.Sprintf("http://localhost:<port>/assets/%s.%s", videoID, mediaType)
-
-	videoMetadata.ThumbnailURL = &staticURL
+	videoMetadata.ThumbnailURL = &dataURL
 	videoMetadata.UpdatedAt = time.Now()
 	delete(videoThumbnails, videoID)
 
